@@ -37,9 +37,18 @@ Le système fonctionne en boucle fermée selon le schéma suivant :
 * **GPU** : NVIDIA recommandé (CUDA supporté).
 * **Dépendances** : Python 3.10+, `uinput`, `mss`, `ultralytics`, `opencv-python`.
 
+## 📸 Aperçu Technique
+
+| Détection Multi-Cibles | Calcul de Trajectoire (Vecteur) |
+|:---:|:---:|
+| ![Détection YOLO](./Img_readme/v10_capture_8.jpg) | ![Vecteur de visée](./Img_readme/sim_20260202141617_1.jpg) |
+*Démonstration de la segmentation en temps réel et du calcul de compensation.*
+
 ## 🚀 Installation
 
 1. **Cloner le dépôt**
    ```bash
    git clone [https://github.com/ton-pseudo/visee-optronique.git](https://github.com/ton-pseudo/visee-optronique.git)
    cd visee-optronique
+
+
