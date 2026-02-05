@@ -44,6 +44,13 @@ Le système fonctionne en boucle fermée selon le schéma suivant :
 | ![Détection YOLO](./Img_readme/v10_capture_8.jpg) | ![Vecteur de visée](./Img_readme/sim_20260202141617_1.jpg) |
 *Démonstration de la segmentation en temps réel et du calcul de compensation.*
 
+## 📺 Démonstration
+<div align="center">
+  <h2>📺 Démonstration en Jeu</h2>
+  <p>Visualisation du Debug Mode avec trajectoire Bézier et Head Offset</p>
+  <img src="Img_readme/Gif_fonctionnement.gif" alt="CS2 Aimbot Demo" width="100%">
+</div>
+
 ## 🚀 Installation
 
 1. **Cloner le dépôt**

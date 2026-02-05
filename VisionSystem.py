@@ -84,7 +84,7 @@ class VisionSystem:
         
         results = self.model.predict(
             frame, 
-            conf=0.40,  
+            conf=0.35,  
             classes=[0],
             imgsz=416,        
             device=0,         
