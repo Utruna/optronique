@@ -3,97 +3,113 @@ import keyboard
 import time
 import math
 import threading
+import numpy as np
+import re
+from pathlib import Path
 
 from VisionSystem import VisionSystem
 from DecisionEngine import DecisionEngine
 from InputHandler import InputHandler
+from KalmanFilterMouse import KalmanFilterMouse
+import config_hardware as cfg  # Réglages matériels et tuning
 
-# --- CLASSE DE GÉNÉRATION DE COURBES (G2 CONTINUITY) ---
+# --- Générateur de courbes (continuité G2) ---
 class BezierGenerator:
     def __init__(self):
-        # On stocke la vélocité précédente pour assurer la continuité de la courbe
+        # On garde la vitesse précédente pour rendre la courbe plus naturelle
         self.prev_vx = 0
         self.prev_vy = 0
 
     def generate_curve(self, target_dx, target_dy, steps):
-        """
-        Génère une liste de micro-mouvements (dx, dy) basés sur une courbe de Bézier quadratique.
-        P0 = (0,0) (Position actuelle)
-        P1 = Point de contrôle (basé sur l'élan précédent)
-        P2 = (target_dx, target_dy) (Cible)
-        """
-        # Le point de contrôle P1 est situé dans le prolongement du mouvement précédent
-        # 0.4 est le facteur d'inertie (plus il est haut, plus la courbe est large)
+        """Découpe le déplacement en micro‑pas via une Bézier quadratique."""
+        # Point de contrôle dans le prolongement du mouvement précédent
+        # 0.4 = inertie (plus c'est haut, plus la courbe est large)
         p1_x = self.prev_vx * 0.4
         p1_y = self.prev_vy * 0.4
 
         micro_movements = []
         last_x, last_y = 0, 0
 
-        # On découpe le mouvement en 'steps' étapes
+        # On découpe le déplacement en `steps` étapes
         for i in range(1, steps + 1):
-            t = i / steps # t va de 0.0 à 1.0
+            t = i / steps  # t va de 0.0 à 1.0
             
-            # Formule de Bézier Quadratique simplifiée (P0 étant à 0,0)
+            # Bézier quadratique (P0 est à 0,0)
             # B(t) = 2(1-t)t*P1 + t^2*P2
             bx = 2 * (1 - t) * t * p1_x + (t**2) * target_dx
             by = 2 * (1 - t) * t * p1_y + (t**2) * target_dy
 
-            # Le mouvement pour cette étape est la différence avec la position précédente
+            # Le pas courant = différence avec la position précédente
             step_x = bx - last_x
             step_y = by - last_y
             
             micro_movements.append((step_x, step_y))
             last_x, last_y = bx, by
 
-        # Mise à jour de la vélocité pour la prochaine frame (Continuité G2)
+        # Mise à jour de la vitesse pour la prochaine frame (continuité G2)
         self.prev_vx = target_dx
         self.prev_vy = target_dy
 
         return micro_movements
 
-# --- MAIN LOOP ---
+# --- Boucle principale ---
 def main_live():
-    # --- CONFIGURATION EXPERT (CS2 / 180Hz+) ---
-    SMOOTH_FACTOR = 2.0    
-    SENS_MULTIPLIER = 1.65   
+    # --- Configuration de base ---
+    SMOOTH_FACTOR = cfg.SMOOTH_FACTOR    
+    SENS_MULTIPLIER = cfg.SENS_MULTIPLIER   
     TRIGGER_DISTANCE = 12   
     COOLDOWN_TIR = 0.15     
-    HEAD_OFFSET_PCT = 0.42  
+    HEAD_OFFSET_PCT = 0.32  
     
-    BEZIER_STEPS = 4        
+    BEZIER_STEPS = cfg.BEZIER_STEPS
+    MICRO_DELAY = cfg.MICRO_MOVEMENT_DELAY
 
-    # 1. Initialisation
-    vision = VisionSystem(fov_size=416) 
-    vision.left = 1074
-    vision.top = 1420
+    # 1. Initialisation (TensorRT si dispo)
+    vision = VisionSystem(
+        fov_size=416,
+        use_tensorrt=cfg.USE_TENSORRT,
+        game_window_x=cfg.GAME_WINDOW_X,
+        game_window_y=cfg.GAME_WINDOW_Y,
+        conf=cfg.YOLO_CONFIDENCE,
+        min_y=cfg.MIN_Y_THRESHOLD
+    )
     
     engine = DecisionEngine()
     mouse = InputHandler()
     bezier = BezierGenerator() 
+    kalman = KalmanFilterMouse()
     
     remainder_x = 0
     remainder_y = 0
 
+    aim_offset_x = cfg.AIM_OFFSET_X
+    aim_offset_y = cfg.AIM_OFFSET_Y
+    offset_step = 1
+    offset_mode = False
+    config_path = Path(__file__).resolve().parent / "config_hardware.py"
+
     tracking_actif = False
     afficher_debug = False
     dernier_tir = 0
+    last_valid_target = None
 
     center = vision.fov_size // 2
     virtual_center = (center, center)
-
-    print("🚀 SYSTÈME OPTIQUE X11 - PRÊT (v2.0 BEZIER)")
+    
+    print("🚀 SYSTÈME OPTIQUE X11 - HARDWARE OPTIMISÉ (RTX 5070)")
     print(f"⚙️ Config: Smooth={SMOOTH_FACTOR} | Steps={BEZIER_STEPS} | Sens={SENS_MULTIPLIER}")
+    print(f"🔥 TensorRT: {'ACTIF' if cfg.USE_TENSORRT else 'DÉSACTIVÉ'}")
     print("[HOME] ON/OFF | [END] Quitter | [PAGE DOWN] Debug")
+    print("[F9] Offset mode | [F10] Save offsets")
 
     try:
         while True:
-            # Gestion des inputs clavier
+            # Raccourcis clavier
             if keyboard.is_pressed('end'): break
             
             if keyboard.is_pressed('home'):
                 tracking_actif = not tracking_actif
-                # Reset de l'inertie quand on active/désactive pour éviter un saut
+                # Reset de l'inertie pour éviter un "saut" visuel
                 bezier.prev_vx, bezier.prev_vy = 0, 0 
                 print(f"📡 Tracking: {'ACTIF' if tracking_actif else 'PAUSE'}")
                 time.sleep(0.3)
@@ -104,32 +120,78 @@ def main_live():
                 print(f"📺 Debug: {'ON' if afficher_debug else 'OFF'}")
                 time.sleep(0.3)
 
-            # 2. Capture et Détection
+            if keyboard.is_pressed('f9'):
+                offset_mode = not offset_mode
+                print(f"🎯 Offset mode: {'ON' if offset_mode else 'OFF'} | X={aim_offset_x} Y={aim_offset_y}")
+                time.sleep(0.3)
+
+            if offset_mode:
+                if keyboard.is_pressed('left'):
+                    aim_offset_x -= offset_step
+                    print(f"🎯 Offset X={aim_offset_x} Y={aim_offset_y}")
+                    time.sleep(0.05)
+                elif keyboard.is_pressed('right'):
+                    aim_offset_x += offset_step
+                    print(f"🎯 Offset X={aim_offset_x} Y={aim_offset_y}")
+                    time.sleep(0.05)
+                elif keyboard.is_pressed('up'):
+                    aim_offset_y -= offset_step
+                    print(f"🎯 Offset X={aim_offset_x} Y={aim_offset_y}")
+                    time.sleep(0.05)
+                elif keyboard.is_pressed('down'):
+                    aim_offset_y += offset_step
+                    print(f"🎯 Offset X={aim_offset_x} Y={aim_offset_y}")
+                    time.sleep(0.05)
+
+                if keyboard.is_pressed('f10'):
+                    try:
+                        content = config_path.read_text(encoding='utf-8')
+                        content = re.sub(r"AIM_OFFSET_X\s*=\s*-?\d+", f"AIM_OFFSET_X = {aim_offset_x}", content)
+                        content = re.sub(r"AIM_OFFSET_Y\s*=\s*-?\d+", f"AIM_OFFSET_Y = {aim_offset_y}", content)
+                        config_path.write_text(content, encoding='utf-8')
+                        print("✅ Offsets sauvegardés dans config_hardware.py")
+                    except Exception as e:
+                        print(f"⚠️ Sauvegarde offsets échouée: {e}")
+                    time.sleep(0.3)
+
+            # 2. Capture + détection
             detections, frame = vision.detect_targets()
 
-            if tracking_actif and detections:
-                target = engine.choose_target(detections, virtual_center)
-
+            if tracking_actif:
+                target = None
+                
+                if detections:
+                    target = engine.choose_target(detections, virtual_center)
+                    if target:
+                        # Mise à jour Kalman (gardé pour plus tard)
+                        kalman.update(np.array([target['x'], target['y']]))
+                        last_valid_target = target
+                # Désactivé : prédiction Kalman quand YOLO perd la cible
+                # (provoquait des rotations) — à réactiver quand mieux réglé
+                
                 if target:
-                    # --- CALCUL CIBLE (TÊTE) ---
-                    dx = target['x'] - center
+                    # --- Calcul de la cible (tête) ---
+                    dx = (target['x'] + aim_offset_x) - center
                     offset_hauteur = target['h'] * HEAD_OFFSET_PCT
-                    dy = (target['y'] - offset_hauteur) - center
+                    dy = (target['y'] + aim_offset_y - offset_hauteur) - center
                     dist = math.hypot(dx, dy)
 
-                    # --- GÉNÉRATION DU MOUVEMENT COMPLEXE ---
+                    # --- Génération du mouvement ---
                     
-                    # 1. On applique le multiplicateur de sensi et le smooth GLOBAL d'abord
-                    target_move_x = (dx * SENS_MULTIPLIER) / SMOOTH_FACTOR
-                    target_move_y = (dy * SENS_MULTIPLIER) / SMOOTH_FACTOR
+                    # 1. Lissage adaptatif basé sur la distance
+                    distance_ratio = min(dist / 100, 1.0)  # 0 = très proche, 1 = loin
+                    adaptive_smooth = SMOOTH_FACTOR + (1.5 * (1 - distance_ratio))  # Moins de frein à courte distance
+                    
+                    target_move_x = (dx * SENS_MULTIPLIER) / adaptive_smooth
+                    target_move_y = (dy * SENS_MULTIPLIER) / adaptive_smooth
 
-                    # 2. On génère la courbe de Bézier vers ce point
+                    # 2. Courbe de Bézier vers ce point
                     curve_steps = bezier.generate_curve(target_move_x, target_move_y, steps=BEZIER_STEPS)
 
-                    # 3. On exécute les micro-mouvements
+                    # 3. Exécution des micro‑mouvements
                     for step_x, step_y in curve_steps:
                         
-                        # Accumulation des restes (Pixel Perfect Logic) à chaque micro-pas
+                        # On conserve les décimales pour la précision sur la durée
                         total_x = step_x + remainder_x
                         total_y = step_y + remainder_y
 
@@ -142,11 +204,10 @@ def main_live():
                         if move_x_int != 0 or move_y_int != 0:
                             mouse.move_mouse(move_x_int, move_y_int)
                         
-                        # Micro-pause essentielle pour laisser le jeu "respirer" entre les pas
-                        # C'est ça qui crée la fluidité perçue par le moteur Source 2
-                        time.sleep(0.0005) 
+                        # Micro‑pause pour garder un mouvement fluide
+                        time.sleep(MICRO_DELAY)
 
-                    # --- LOGIQUE DE TIR ---
+                    # --- Logique de tir ---
                     if dist < TRIGGER_DISTANCE:
                         maintenant = time.time()
                         if maintenant - dernier_tir > COOLDOWN_TIR:
@@ -156,12 +217,35 @@ def main_live():
                     # Debug
                     if afficher_debug and frame is not None:
                         head_x, head_y = int(target['x']), int(target['y'] - offset_hauteur)
+                        adj_head_x = head_x + aim_offset_x
+                        adj_head_y = head_y + aim_offset_y
                         cv2.circle(frame, (head_x, head_y), 5, (0, 255, 0), 2)
-                        cv2.line(frame, virtual_center, (head_x, head_y), (0, 255, 0), 1)
+                        cv2.circle(frame, (adj_head_x, adj_head_y), 5, (0, 255, 255), 2)
+                        cv2.line(frame, virtual_center, (adj_head_x, adj_head_y), (0, 255, 255), 1)
+                        cv2.putText(
+                            frame,
+                            f"Offset X={aim_offset_x} Y={aim_offset_y}",
+                            (8, 20),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.5,
+                            (0, 255, 255),
+                            1
+                        )
 
             # 3. Affichage
             if afficher_debug and frame is not None:
                 cv2.drawMarker(frame, virtual_center, (0, 0, 255), cv2.MARKER_CROSS, 10, 1)
+                offset_center = (center + aim_offset_x, center + aim_offset_y)
+                cv2.drawMarker(frame, offset_center, (0, 255, 255), cv2.MARKER_CROSS, 10, 1)
+                cv2.putText(
+                    frame,
+                    f"Offset X={aim_offset_x} Y={aim_offset_y}",
+                    (8, 20),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    (0, 255, 255),
+                    1
+                )
                 cv2.imshow("Vision Debug", frame)
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     afficher_debug = False

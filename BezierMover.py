@@ -1,9 +1,11 @@
 class BezierGenerator:
     def __init__(self):
+        """Génère des micro‑mouvements fluides via Bézier."""
         self.prev_vx = 0
         self.prev_vy = 0
 
     def generate_curve(self, target_dx, target_dy, steps):
+        """Retourne une liste de petits pas pour aller vers la cible."""
         p1_x = self.prev_vx * 0.15
         p1_y = self.prev_vy * 0.15
 

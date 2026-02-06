@@ -3,25 +3,24 @@ import math
 class DecisionEngine:
     def choose_target(self, detections, center_screen):
         """
-        Sélectionne STRICTEMENT la cible la plus proche du centre (viseur).
-        Plus aucun aléatoire : c'est mathématique.
+        Choisit la cible la plus proche du centre (viseur).
+        Pas d'aléatoire : on prend la distance minimale.
         """
         if not detections:
             return None
 
         best_target = None
-        min_dist = float('inf') # On commence avec une distance infinie
+        min_dist = float('inf')  # point de départ simple
 
         cx, cy = center_screen
 
         for target in detections:
-            # Calcul de la distance réelle (Théorème de Pythagore)
-            # entre le centre de la cible et le centre de ton écran
+            # Distance euclidienne entre la cible et le centre
             dx = target['x'] - cx
             dy = target['y'] - cy
             dist = math.hypot(dx, dy)
 
-            # Comparaison simple : est-ce que celle-ci est plus près que la précédente ?
+            # On garde la plus proche
             if dist < min_dist:
                 min_dist = dist
                 best_target = target
