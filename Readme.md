@@ -101,7 +101,5 @@ Calibration et Debug :
 - `VisionSystem.py` fonctionne en mode synchrone (capture + inférence) pour assurer que chaque frame est bien traitée par YOLO en runtime.
 - Si vous rencontrez une erreur d'unpickling sur le chargement du modèle, le loader force `weights_only=False` pour garantir la compatibilité avec certaines versions de PyTorch/Ultralytics.
 
----
-Contributeurs et instructions détaillées sont dans les fichiers internes. Merci de garder le dépôt propre et de documenter les prochains changements.
 
 
