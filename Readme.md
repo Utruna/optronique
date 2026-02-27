@@ -5,20 +5,22 @@
 ![Platform](https://img.shields.io/badge/Platform-Linux%20Pop!_OS-yellow)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
-**Visée Optronique** est un système expérimental de vision par ordinateur temps réel conçu pour l'acquisition et le suivi de cibles dans des environnements de simulation rapide (ex: Aim Lab).
+**Visée Optronique** est un système expérimental de vision par ordinateur temps réel conçu pour l'acquisition et le suivi de cibles dans des environnements 3D haute fréquence comme Counter-Strike 2.
 
-Développé nativement pour l'architecture **Linux (X11)**, ce projet explore les limites de la latence dans la boucle de détection-action en couplant l'inférence neuronale (YOLO) avec l'injection d'entrées au niveau du noyau (uinput).
+Développé nativement pour l'architecture **Linux (X11)**, ce projet explore les limites de la latence dans la boucle de détection-action en couplant l'inférence neuronale (YOLO / ONNX) avec l'injection d'entrées au niveau du noyau (uinput).
+
+> **⚠️ Avertissement Légal & Éthique :** Ce projet est publié **strictement à des fins éducatives et de recherche**. Son but est de démontrer les capacités des modèles de détection d'objets modernes couplés à des algorithmes de lissage biomécaniques (Bézier G2). L'auteur n'encourage en aucun cas l'utilisation de ce script en multijoueur compétitif pour altérer l'expérience des autres joueurs.
 
 ---
 
 ## ⚡ Caractéristiques Techniques
 
-* **Moteur de Vision Neurale** : Utilisation de **YOLOv10** optimisé pour l'inférence GPU.
+* **Moteur de Vision Neurale** : Utilisation de **YOLOv10** optimisé pour l'inférence GPU (support natif de PyTorch et conversion ONNX pour des performances +200 FPS).
 * **Pipeline de Capture** : Capture d'écran haute fréquence via **X11/Xlib** sur une *Region of Interest* (ROI) calibrée.
-* **Contrôle Moteur Humanoïde** :
-  * Lissage adaptatif en fonction de la distance.
-  * Trajectoires de Bézier non-linéaires.
-  * Micro-stepping pour une fluidité accrue.
+* **Contrôle Moteur Humanoïde (Human-Flow)** :
+  * Lissage adaptatif avec continuité de courbure (**Bézier G2**).
+  * Courbe d'accélération non-linéaire (Ease-Out).
+  * Micro-stepping haute fréquence pour une fluidité accrue.
 * **Intégration Système** : Injection d'événements souris via le module noyau `uinput` pour une émulation matérielle indétectable logiciellement.
 
 ## 🛠️ Architecture
@@ -27,55 +29,59 @@ Le système fonctionne en boucle fermée selon le schéma suivant :
 
 1.  **Acquisition** : Capture brute du framebuffer (Xorg/X11).
 2.  **Inférence** : Détection des cibles via Réseau de Neurones Convolutifs (CNN).
-3.  **Décision** : Calcul vectoriel de la cible prioritaire (plus proche voisin).
-4.  **Action** : Calcul du delta de mouvement et génération de micro-mouvements (Bézier).
+3.  **Décision** : Calcul vectoriel de la cible prioritaire et compensation dynamique du recul/hauteur (*Head Offset*).
+4.  **Action** : Calcul du delta de mouvement et génération de micro-mouvements fluides (Bézier).
 
 ## 📋 Prérequis
 
 * **OS** : Linux (Testé sur Pop!_OS 22.04 LTS).
 * **Serveur d'affichage** : **X11 / Xorg** (Wayland n'est pas supporté pour la capture haute performance).
 * **GPU** : NVIDIA recommandé (CUDA supporté).
-* **Dépendances** : Python 3.10+, `python-xlib`, `uinput`, `ultralytics`, `opencv-python`, `numpy`.
+* **Dépendances** : Python 3.10+, `python-xlib`, `uinput`, `ultralytics`, `opencv-python`, `numpy`, `onnxruntime-gpu`, `onnxslim`.
 
 ## 📸 Aperçu Technique
 
 | Détection Multi-Cibles | Calcul de Trajectoire (Vecteur) |
 |:---:|:---:|
 | ![Détection YOLO](./Img_readme/v10_capture_8.jpg) | ![Vecteur de visée](./Img_readme/sim_20260202141617_1.jpg) |
-*Démonstration de la segmentation en temps réel et du calcul de compensation.*
+| *Démonstration de la segmentation en temps réel.* | *Calcul de compensation via des trajectoires de Bézier non-linéaires pour un mouvement humanoïde.* |
 
 ## 📺 Démonstration
+
 <div align="center">
-  <h2>📺 Démonstration en Jeu</h2>
-  <p>Visualisation du Debug Mode avec trajectoire Bézier et Head Offset</p>
+  <p><em>Visualisation du Debug Mode avec trajectoire Bézier et Head Offset.</em></p>
   <img src="Img_readme/Gif_fonctionnement.gif" alt="CS2 Aimbot Demo" width="100%">
 </div>
 
 ## 🚀 Installation
 
 1. **Cloner le dépôt**
-  ```bash
-  git clone https://github.com/ton-pseudo/visee-optronique.git
-  cd visee-optronique
-  ```
+   ```bash
+   git clone https://github.com/Utruna/optronique.git
+   cd optronique
+   ```
 
 2. **Créer un environnement et installer les dépendances**
-  ```bash
-  python -m venv .venv
-  source .venv/bin/activate
-  pip install -r requirements.txt
-  ```
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate
+   pip install -r requirements.txt
+   ```
 
-3. **Poids YOLO (obligatoire)**
-  - Le modèle est chargé par défaut depuis `yolov10n.pt` à la racine du projet.
-  - Placez le fichier **yolov10n.pt** dans le dossier du projet (même niveau que `aimbot.py`).
-  - Si vous souhaitez un autre chemin/nom, modifiez l'argument `model_path` dans `VisionSystem` (ou ajustez l'instanciation dans `aimbot.py`).
+3. **Poids YOLO & Optimisation ONNX (Recommandé pour +200 FPS)**
+   - Le modèle est chargé par défaut depuis `yolov10n.pt` à la racine du projet.
+   - **Pour des performances maximales**, convertissez le modèle au format ONNX avec ces commandes :
+     ```bash
+     yolo export model=yolov10n.pt format=onnx imgsz=416 half=True device=0
+     onnxslim yolov10n.onnx yolov10n_opt.onnx
+     ```
+   - Si vous utilisez ONNX, modifiez l'argument `model_path` dans `VisionSystem.py` pour pointer vers `yolov10n_opt.onnx`.
 
 4. **Exécution**
-  - Lancement en mode interactif (nécessite `sudo` si `uinput` n'est pas accessible) :
-    ```bash
-    sudo .venv/bin/python aimbot.py
-    ```
+   - Lancement en mode interactif (nécessite `sudo` si `uinput` n'est pas accessible) :
+     ```bash
+     sudo .venv/bin/python aimbot.py
+     ```
 
 ## 🎛️ Commandes Runtime & Calibration
 
@@ -100,6 +106,3 @@ Calibration et Debug :
 ## Notes techniques rapides
 - `VisionSystem.py` fonctionne en mode synchrone (capture + inférence) pour assurer que chaque frame est bien traitée par YOLO en runtime.
 - Si vous rencontrez une erreur d'unpickling sur le chargement du modèle, le loader force `weights_only=False` pour garantir la compatibilité avec certaines versions de PyTorch/Ultralytics.
-
-
-
