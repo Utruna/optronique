@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Debug: Teste YOLO directement sur une frame de test"""
+"""Debug utility: Test YOLOv10 inference directly on a captured test frame."""
 
 import numpy as np
 from ultralytics import YOLO
 import torch
 import cv2
 
-# Charger l'image de test
+# Load test image
 img = cv2.imread('/home/colin/Documents/Projet/aimbot_yolo/capture_test.jpg')
 if img is None:
     print("❌ capture_test.jpg not found!")
@@ -14,14 +14,14 @@ if img is None:
 
 print(f"Image shape: {img.shape}")
 
-# Charger YOLO
+# Load YOLOv10
 model = YOLO('yolov10n.pt')
 if torch.cuda.is_available():
     model.to('cuda')
-    print("✅ YOLO sur GPU")
+    print("✅ YOLOv10 on GPU")
 
-# Test direct
-print("🧪 Test YOLO sur capture_test.jpg...")
+# Run inference
+print("🧪 Running YOLOv10 inference on capture_test.jpg...")
 results = model.predict(
     img,
     conf=0.25,
@@ -31,7 +31,7 @@ results = model.predict(
     verbose=False
 )
 
-# Parse
+# Parse detections
 detections = []
 if len(results) > 0 and len(results[0].boxes) > 0:
     for box in results[0].boxes:
@@ -41,8 +41,8 @@ if len(results) > 0 and len(results[0].boxes) > 0:
             'y': int((y1 + y2) / 2),
             'conf': float(box.conf)
         })
-    print(f"✅ {len(detections)} détections trouvées!")
+    print(f"✅ {len(detections)} detection(s) found!")
     for d in detections:
-        print(f"   → Position: ({d['x']}, {d['y']}) | Confiance: {d['conf']:.2f}")
+        print(f"   → Position: ({d['x']}, {d['y']}) | Confidence: {d['conf']:.2f}")
 else:
-    print("❌ Aucune détection (même à conf=0.25)")
+    print("❌ No detections (even at conf=0.25)")

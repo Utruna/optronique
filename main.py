@@ -11,60 +11,77 @@ from VisionSystem import VisionSystem
 from DecisionEngine import DecisionEngine
 from InputHandler import InputHandler
 from KalmanFilterMouse import KalmanFilterMouse
-import config_hardware as cfg  # Réglages matériels et tuning
+import config_hardware as cfg  # Hardware tuning parameters
 
-# --- Générateur de courbes (continuité G2) ---
+# --- G2 Curvature-Continuous Bézier curve generator ---
 class BezierGenerator:
     def __init__(self):
-        # On garde la vitesse précédente pour rendre la courbe plus naturelle
+        # Carry-over velocity from the previous curve for G2 continuity
         self.prev_vx = 0
         self.prev_vy = 0
 
     def generate_curve(self, target_dx, target_dy, steps):
-        """Découpe le déplacement en micro‑pas via une Bézier quadratique."""
-        # Point de contrôle dans le prolongement du mouvement précédent
-        # 0.4 = inertie (plus c'est haut, plus la courbe est large)
+        """Decompose a displacement into micro-steps via a quadratic Bézier curve.
+
+        The control point P1 is placed in the direction of the previous movement
+        vector scaled by an inertia factor (0.4), producing smooth G2 curvature
+        continuity between successive motion segments.
+
+        Parameters
+        ----------
+        target_dx : float
+            Target displacement along the X axis (pixels).
+        target_dy : float
+            Target displacement along the Y axis (pixels).
+        steps : int
+            Number of micro-steps to generate.
+
+        Returns
+        -------
+        list of tuple[float, float]
+            Ordered list of (step_x, step_y) incremental displacements whose sum
+            equals (target_dx, target_dy).
+        """
+        # Control point in the direction of the previous velocity (inertia = 0.4)
         p1_x = self.prev_vx * 0.4
         p1_y = self.prev_vy * 0.4
 
         micro_movements = []
         last_x, last_y = 0, 0
 
-        # On découpe le déplacement en `steps` étapes
         for i in range(1, steps + 1):
-            t = i / steps  # t va de 0.0 à 1.0
-            
-            # Bézier quadratique (P0 est à 0,0)
-            # B(t) = 2(1-t)t*P1 + t^2*P2
+            t = i / steps  # t ∈ (0, 1]
+
+            # Quadratic Bézier: B(t) = 2(1−t)·t·P1 + t²·P2  (P0 at origin)
             bx = 2 * (1 - t) * t * p1_x + (t**2) * target_dx
             by = 2 * (1 - t) * t * p1_y + (t**2) * target_dy
 
-            # Le pas courant = différence avec la position précédente
+            # Incremental step = current position minus last accumulated position
             step_x = bx - last_x
             step_y = by - last_y
-            
+
             micro_movements.append((step_x, step_y))
             last_x, last_y = bx, by
 
-        # Mise à jour de la vitesse pour la prochaine frame (continuité G2)
+        # Update carry-over velocity for the next curve segment (G2 continuity)
         self.prev_vx = target_dx
         self.prev_vy = target_dy
 
         return micro_movements
 
-# --- Boucle principale ---
+# --- Main acquisition loop ---
 def main_live():
-    # --- Configuration de base ---
-    SMOOTH_FACTOR = cfg.SMOOTH_FACTOR    
-    SENS_MULTIPLIER = cfg.SENS_MULTIPLIER   
-    TRIGGER_DISTANCE = 12   
-    COOLDOWN_TIR = 0.15     
-    HEAD_OFFSET_PCT = 0.32  
-    
+    # --- Baseline motion parameters ---
+    SMOOTH_FACTOR = cfg.SMOOTH_FACTOR
+    SENS_MULTIPLIER = cfg.SENS_MULTIPLIER
+    TRIGGER_DISTANCE = 12
+    COOLDOWN_TIR = 0.15
+    HEAD_OFFSET_PCT = 0.32
+
     BEZIER_STEPS = cfg.BEZIER_STEPS
     MICRO_DELAY = cfg.MICRO_MOVEMENT_DELAY
 
-    # 1. Initialisation (TensorRT si dispo)
+    # 1. System initialisation
     vision = VisionSystem(
         fov_size=416,
         use_tensorrt=cfg.USE_TENSORRT,
@@ -73,12 +90,12 @@ def main_live():
         conf=cfg.YOLO_CONFIDENCE,
         min_y=cfg.MIN_Y_THRESHOLD
     )
-    
+
     engine = DecisionEngine()
     mouse = InputHandler()
-    bezier = BezierGenerator() 
+    bezier = BezierGenerator()
     kalman = KalmanFilterMouse()
-    
+
     remainder_x = 0
     remainder_y = 0
 
@@ -88,36 +105,36 @@ def main_live():
     offset_mode = False
     config_path = Path(__file__).resolve().parent / "config_hardware.py"
 
-    tracking_actif = False
-    afficher_debug = False
-    dernier_tir = 0
+    tracking_active = False
+    show_debug = False
+    last_trigger = 0
     last_valid_target = None
 
     center = vision.fov_size // 2
     virtual_center = (center, center)
-    
-    print("🚀 SYSTÈME OPTIQUE X11 - HARDWARE OPTIMISÉ (RTX 5070)")
+
+    print("🚀 AUTONOMOUS SIGHTING SYSTEM — X11/uinput Pipeline (RTX 5070 optimised)")
     print(f"⚙️ Config: Smooth={SMOOTH_FACTOR} | Steps={BEZIER_STEPS} | Sens={SENS_MULTIPLIER}")
-    print(f"🔥 TensorRT: {'ACTIF' if cfg.USE_TENSORRT else 'DÉSACTIVÉ'}")
-    print("[HOME] ON/OFF | [END] Quitter | [PAGE DOWN] Debug")
+    print(f"🔥 TensorRT: {'ENABLED' if cfg.USE_TENSORRT else 'DISABLED'}")
+    print("[HOME] ON/OFF | [END] Quit | [PAGE DOWN] Debug")
     print("[F9] Offset mode | [F10] Save offsets")
 
     try:
         while True:
-            # Raccourcis clavier
+            # Hotkey handling
             if keyboard.is_pressed('end'): break
-            
+
             if keyboard.is_pressed('home'):
-                tracking_actif = not tracking_actif
-                # Reset de l'inertie pour éviter un "saut" visuel
-                bezier.prev_vx, bezier.prev_vy = 0, 0 
-                print(f"📡 Tracking: {'ACTIF' if tracking_actif else 'PAUSE'}")
+                tracking_active = not tracking_active
+                # Reset inertia carry-over to prevent a visual jump on re-enable
+                bezier.prev_vx, bezier.prev_vy = 0, 0
+                print(f"📡 Tracking: {'ACTIVE' if tracking_active else 'PAUSED'}")
                 time.sleep(0.3)
 
             if keyboard.is_pressed('page down'):
-                afficher_debug = not afficher_debug
-                if not afficher_debug: cv2.destroyAllWindows()
-                print(f"📺 Debug: {'ON' if afficher_debug else 'OFF'}")
+                show_debug = not show_debug
+                if not show_debug: cv2.destroyAllWindows()
+                print(f"📺 Debug: {'ON' if show_debug else 'OFF'}")
                 time.sleep(0.3)
 
             if keyboard.is_pressed('f9'):
@@ -149,49 +166,51 @@ def main_live():
                         content = re.sub(r"AIM_OFFSET_X\s*=\s*-?\d+", f"AIM_OFFSET_X = {aim_offset_x}", content)
                         content = re.sub(r"AIM_OFFSET_Y\s*=\s*-?\d+", f"AIM_OFFSET_Y = {aim_offset_y}", content)
                         config_path.write_text(content, encoding='utf-8')
-                        print("✅ Offsets sauvegardés dans config_hardware.py")
+                        print("✅ Offsets saved to config_hardware.py")
                     except Exception as e:
-                        print(f"⚠️ Sauvegarde offsets échouée: {e}")
+                        print(f"⚠️ Failed to save offsets: {e}")
                     time.sleep(0.3)
 
-            # 2. Capture + détection
+            # 2. Capture + detection
             detections, frame = vision.detect_targets()
 
-            if tracking_actif:
+            if tracking_active:
                 target = None
-                
+
                 if detections:
                     target = engine.choose_target(detections, virtual_center)
                     if target:
-                        # Mise à jour Kalman (gardé pour plus tard)
+                        # Kalman update (retained for future predictor re-integration)
                         kalman.update(np.array([target['x'], target['y']]))
                         last_valid_target = target
-                # Désactivé : prédiction Kalman quand YOLO perd la cible
-                # (provoquait des rotations) — à réactiver quand mieux réglé
-                
+                # Kalman prediction when YOLO loses the target is intentionally disabled
+                # (caused erratic cursor rotation in earlier versions — re-enable when tuned)
+
                 if target:
-                    # --- Calcul de la cible (tête) ---
+                    # --- Head-offset target computation ---
                     dx = (target['x'] + aim_offset_x) - center
                     offset_hauteur = target['h'] * HEAD_OFFSET_PCT
                     dy = (target['y'] + aim_offset_y - offset_hauteur) - center
                     dist = math.hypot(dx, dy)
 
-                    # --- Génération du mouvement ---
-                    
-                    # 1. Lissage adaptatif basé sur la distance
-                    distance_ratio = min(dist / 100, 1.0)  # 0 = très proche, 1 = loin
-                    adaptive_smooth = SMOOTH_FACTOR + (1.5 * (1 - distance_ratio))  # Moins de frein à courte distance
-                    
+                    # --- Adaptive Biomechanical Smoothing ---
+
+                    # 1. Distance-proportional damping
+                    #    ratio = 0 when target is very close, 1 when ≥ 100 px away
+                    distance_ratio = min(dist / 100, 1.0)
+                    # Less damping at close range for fast snap acquisition
+                    adaptive_smooth = SMOOTH_FACTOR + (1.5 * (1 - distance_ratio))
+
                     target_move_x = (dx * SENS_MULTIPLIER) / adaptive_smooth
                     target_move_y = (dy * SENS_MULTIPLIER) / adaptive_smooth
 
-                    # 2. Courbe de Bézier vers ce point
+                    # 2. G2 Bézier micro-step generation
                     curve_steps = bezier.generate_curve(target_move_x, target_move_y, steps=BEZIER_STEPS)
 
-                    # 3. Exécution des micro‑mouvements
+                    # 3. Execute micro-steps with sub-pixel remainder accumulation
                     for step_x, step_y in curve_steps:
-                        
-                        # On conserve les décimales pour la précision sur la durée
+
+                        # Accumulate fractional pixel remainders for long-term precision
                         total_x = step_x + remainder_x
                         total_y = step_y + remainder_y
 
@@ -203,19 +222,19 @@ def main_live():
 
                         if move_x_int != 0 or move_y_int != 0:
                             mouse.move_mouse(move_x_int, move_y_int)
-                        
-                        # Micro‑pause pour garder un mouvement fluide
+
+                        # Inter-step pause to match mouse polling rate
                         time.sleep(MICRO_DELAY)
 
-                    # --- Logique de tir ---
+                    # --- Trigger logic ---
                     if dist < TRIGGER_DISTANCE:
-                        maintenant = time.time()
-                        if maintenant - dernier_tir > COOLDOWN_TIR:
+                        now = time.time()
+                        if now - last_trigger > COOLDOWN_TIR:
                             mouse.click()
-                            dernier_tir = maintenant
+                            last_trigger = now
 
-                    # Debug
-                    if afficher_debug and frame is not None:
+                    # Debug overlay
+                    if show_debug and frame is not None:
                         head_x, head_y = int(target['x']), int(target['y'] - offset_hauteur)
                         adj_head_x = head_x + aim_offset_x
                         adj_head_y = head_y + aim_offset_y
@@ -232,8 +251,8 @@ def main_live():
                             1
                         )
 
-            # 3. Affichage
-            if afficher_debug and frame is not None:
+            # 3. Debug window rendering
+            if show_debug and frame is not None:
                 cv2.drawMarker(frame, virtual_center, (0, 0, 255), cv2.MARKER_CROSS, 10, 1)
                 offset_center = (center + aim_offset_x, center + aim_offset_y)
                 cv2.drawMarker(frame, offset_center, (0, 255, 255), cv2.MARKER_CROSS, 10, 1)
@@ -248,10 +267,10 @@ def main_live():
                 )
                 cv2.imshow("Vision Debug", frame)
                 if cv2.waitKey(1) & 0xFF == ord('q'):
-                    afficher_debug = False
+                    show_debug = False
 
     except Exception as e:
-        print(f"❌ Erreur critique : {e}")
+        print(f"❌ Critical error: {e}")
     finally:
         if hasattr(vision, 'stop'): vision.stop()
         cv2.destroyAllWindows()

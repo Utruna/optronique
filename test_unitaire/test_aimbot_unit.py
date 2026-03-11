@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Tests unitaires pour l'aimbot YOLO
-Vérifie le bon fonctionnement de chaque composant
+Unit tests for the Autonomous Sighting System — YOLOv10 Neural Inference Loop.
+Verifies the correct behaviour of each pipeline component in isolation.
 """
 
 import unittest
@@ -13,181 +13,172 @@ import time
 import queue
 import threading
 
-# Import des modules à tester
+# Import modules under test
 from KalmanFilterMouse import KalmanFilterMouse
 from DecisionEngine import DecisionEngine
-from aimbot import BezierGenerator
+from main import BezierGenerator
 
 
 class TestKalmanFilter(unittest.TestCase):
-    """Tests du filtre de Kalman pour prédiction de trajectoire"""
-    
+    """Tests for the Kalman filter used in target trajectory prediction."""
+
     def setUp(self):
         self.kalman = KalmanFilterMouse()
-    
+
     def test_initialization(self):
-        """Vérifier l'initialisation correcte"""
+        """Verify correct initial state."""
         self.assertEqual(self.kalman.state.shape, (4,))
         self.assertEqual(self.kalman.P.shape, (4, 4))
         np.testing.assert_array_equal(self.kalman.state, np.zeros(4))
-    
+
     def test_update(self):
-        """Vérifier que le filtre se met à jour avec une mesure"""
+        """Verify that the filter converges toward a measurement after an update."""
         measurement = np.array([100.0, 150.0])
         self.kalman.update(measurement)
-        
-        # L'état doit avoir convergé vers la mesure
+
         self.assertAlmostEqual(self.kalman.state[0], 100.0, delta=50)
         self.assertAlmostEqual(self.kalman.state[1], 150.0, delta=50)
-    
+
     def test_prediction(self):
-        """Vérifier que la prédiction fonctionne"""
-        # Initialiser avec une position
+        """Verify that the prediction step returns a valid 2-D position."""
         self.kalman.update(np.array([100.0, 100.0]))
-        
-        # Prédire la prochaine position
+
         predicted = self.kalman.predict()
-        
+
         self.assertEqual(len(predicted), 2)
         self.assertIsInstance(predicted[0], (int, float, np.number))
         self.assertIsInstance(predicted[1], (int, float, np.number))
-    
+
     def test_tracking_moving_target(self):
-        """Simuler un tracking de cible en mouvement"""
+        """Simulate tracking a linearly moving target and verify prediction direction."""
         positions = [
             (100, 100),
             (110, 105),
             (120, 110),
             (130, 115)
         ]
-        
+
         for x, y in positions:
             self.kalman.update(np.array([x, y]))
-        
-        # La prédiction doit suivre la tendance
+
+        # Predicted position should continue the rightward / downward trend
         predicted = self.kalman.predict()
-        # Avec le Kalman, la prédiction est plus conservative
-        self.assertGreater(predicted[0], 110)  # Continue vers la droite (ajusté)
-        self.assertGreater(predicted[1], 100)  # Continue vers le bas
+        self.assertGreater(predicted[0], 110)
+        self.assertGreater(predicted[1], 100)
 
 
 class TestBezierGenerator(unittest.TestCase):
-    """Tests du générateur de courbes de Bézier"""
-    
+    """Tests for the G2-continuous Bézier micro-step generator."""
+
     def setUp(self):
         self.bezier = BezierGenerator()
-    
+
     def test_initialization(self):
-        """Vérifier l'initialisation"""
+        """Verify zero initial carry-over velocity."""
         self.assertEqual(self.bezier.prev_vx, 0)
         self.assertEqual(self.bezier.prev_vy, 0)
-    
+
     def test_curve_generation_basic(self):
-        """Générer une courbe simple"""
+        """Generate a simple curve and verify that micro-steps sum to the target delta."""
         target_dx, target_dy = 50, 30
         steps = 5
-        
+
         curve = self.bezier.generate_curve(target_dx, target_dy, steps)
-        
+
         self.assertEqual(len(curve), steps)
-        
-        # Vérifier que la somme des micro-mouvements = cible
+
+        # Sum of all micro-steps must equal the original displacement vector
         total_x = sum(step[0] for step in curve)
         total_y = sum(step[1] for step in curve)
-        
+
         self.assertAlmostEqual(total_x, target_dx, delta=0.1)
         self.assertAlmostEqual(total_y, target_dy, delta=0.1)
-    
+
     def test_curve_smoothness(self):
-        """Vérifier la continuité G2 (pas de saut brusque)"""
+        """Verify G2 continuity: mid-curve steps should be at least as large as the first step."""
         curve = self.bezier.generate_curve(100, 50, steps=10)
-        
-        # Les premiers mouvements doivent être plus petits (accélération douce)
+
         first_step = math.hypot(curve[0][0], curve[0][1])
         mid_step = math.hypot(curve[5][0], curve[5][1])
-        
-        # Le milieu de la courbe doit avoir des steps plus grands
+
         self.assertGreater(mid_step, first_step * 0.5)
-    
+
     def test_continuity_between_curves(self):
-        """Vérifier la continuité entre deux courbes successives"""
-        # Première courbe
+        """Verify that the carry-over velocity is updated for the next segment."""
         self.bezier.generate_curve(50, 30, steps=5)
-        prev_vx_1 = self.bezier.prev_vx
-        
-        # Deuxième courbe
+
         self.bezier.generate_curve(40, 20, steps=5)
-        
-        # La vélocité doit avoir été mise à jour
+
+        # After the second curve the carry-over must reflect the second target
         self.assertEqual(self.bezier.prev_vx, 40)
         self.assertEqual(self.bezier.prev_vy, 20)
 
 
 class TestDecisionEngine(unittest.TestCase):
-    """Tests du moteur de décision (sélection de cible)"""
-    
+    """Tests for the target selection logic (nearest-to-crosshair policy)."""
+
     def setUp(self):
         self.engine = DecisionEngine()
         self.center = (208, 208)
-    
+
     def test_no_detections(self):
-        """Aucune détection disponible"""
+        """Return None when no detections are available."""
         result = self.engine.choose_target([], self.center)
         self.assertIsNone(result)
-    
+
     def test_single_target(self):
-        """Une seule cible disponible"""
+        """A single detection must always be selected."""
         detections = [
             {'id': 0, 'x': 200, 'y': 200, 'w': 50, 'h': 80, 'conf': 0.9}
         ]
         result = self.engine.choose_target(detections, self.center)
         self.assertEqual(result['id'], 0)
-    
+
     def test_closest_target_selection(self):
-        """Sélectionner la cible la plus proche du centre"""
+        """The detection nearest to the crosshair centre must be chosen."""
         detections = [
-            {'id': 0, 'x': 150, 'y': 150, 'w': 50, 'h': 80, 'conf': 0.8},  # Loin
-            {'id': 1, 'x': 210, 'y': 210, 'w': 50, 'h': 80, 'conf': 0.9},  # Proche
-            {'id': 2, 'x': 100, 'y': 300, 'w': 50, 'h': 80, 'conf': 0.95}  # Très loin
+            {'id': 0, 'x': 150, 'y': 150, 'w': 50, 'h': 80, 'conf': 0.8},   # far
+            {'id': 1, 'x': 210, 'y': 210, 'w': 50, 'h': 80, 'conf': 0.9},   # nearest
+            {'id': 2, 'x': 100, 'y': 300, 'w': 50, 'h': 80, 'conf': 0.95}   # very far
         ]
-        
+
         result = self.engine.choose_target(detections, self.center)
-        
-        # La cible ID 1 (210, 210) doit être choisie car plus proche de (208, 208)
+
+        # ID 1 at (210, 210) is closest to centre (208, 208)
         self.assertEqual(result['id'], 1)
-    
+
     def test_distance_calculation(self):
-        """Vérifier le calcul exact de distance"""
+        """Verify exact Euclidean distance ordering."""
         center = (200, 200)
         detections = [
-            {'id': 0, 'x': 200, 'y': 210, 'w': 50, 'h': 80, 'conf': 0.9},  # 10px
-            {'id': 1, 'x': 200, 'y': 220, 'w': 50, 'h': 80, 'conf': 0.9},  # 20px
+            {'id': 0, 'x': 200, 'y': 210, 'w': 50, 'h': 80, 'conf': 0.9},  # 10 px
+            {'id': 1, 'x': 200, 'y': 220, 'w': 50, 'h': 80, 'conf': 0.9},  # 20 px
         ]
-        
+
         result = self.engine.choose_target(detections, center)
         self.assertEqual(result['id'], 0)
 
 
-class TestIntegrationAimbot(unittest.TestCase):
-    """Tests d'intégration simulant le comportement global"""
-    
+class TestIntegrationPipeline(unittest.TestCase):
+    """Integration tests simulating the full target acquisition pipeline."""
+
     def test_full_tracking_pipeline(self):
-        """Simuler une séquence complète de tracking"""
+        """Simulate a complete detection → Kalman → Bézier sequence."""
         kalman = KalmanFilterMouse()
         bezier = BezierGenerator()
         engine = DecisionEngine()
         center = (208, 208)
-        
-        # Simuler des détections successives
+
+        # Simulate successive detection frames including one dropped frame
         detections_sequence = [
             [{'id': 0, 'x': 180, 'y': 180, 'w': 50, 'h': 80, 'conf': 0.9}],
             [{'id': 0, 'x': 185, 'y': 185, 'w': 50, 'h': 80, 'conf': 0.9}],
-            [],  # Frame perdue
+            [],  # Detector miss — Kalman predicts
             [{'id': 0, 'x': 195, 'y': 195, 'w': 50, 'h': 80, 'conf': 0.9}],
         ]
-        
+
         last_valid_target = None
-        
+
         for detections in detections_sequence:
             if detections:
                 target = engine.choose_target(detections, center)
@@ -195,131 +186,124 @@ class TestIntegrationAimbot(unittest.TestCase):
                     kalman.update(np.array([target['x'], target['y']]))
                     last_valid_target = target
             else:
-                # Prédiction pendant perte de détection
+                # Fall-back prediction during detection gap
                 if last_valid_target is not None:
                     predicted = kalman.predict()
                     target = last_valid_target.copy()
                     target['x'], target['y'] = int(predicted[0]), int(predicted[1])
-            
-            # Générer mouvement
+
             if last_valid_target:
                 dx = last_valid_target['x'] - center[0]
                 dy = last_valid_target['y'] - center[1]
                 curve = bezier.generate_curve(dx, dy, steps=4)
-                
-                # Vérifier que la courbe est générée
+
                 self.assertIsInstance(curve, list)
                 self.assertGreater(len(curve), 0)
-    
+
     def test_adaptive_smoothing_logic(self):
-        """Vérifier la logique de smooth adaptatif"""
+        """Verify that adaptive damping is stronger at close range than at distance."""
         SMOOTH_FACTOR = 2.0
-        
-        # Test: cible proche (dist = 10)
-        dist_proche = 10
-        distance_ratio_proche = min(dist_proche / 100, 1.0)
-        adaptive_smooth_proche = SMOOTH_FACTOR + (3.0 * (1 - distance_ratio_proche))
-        
-        # Test: cible loin (dist = 150)
-        dist_loin = 150
-        distance_ratio_loin = min(dist_loin / 100, 1.0)
-        adaptive_smooth_loin = SMOOTH_FACTOR + (3.0 * (1 - distance_ratio_loin))
-        
-        # Le smooth doit être plus élevé pour les cibles proches
-        self.assertGreater(adaptive_smooth_proche, adaptive_smooth_loin)
-        self.assertAlmostEqual(adaptive_smooth_proche, 4.7, delta=0.5)
-        self.assertLessEqual(adaptive_smooth_loin, 2.0)
+
+        # Close target (10 px)
+        dist_close = 10
+        ratio_close = min(dist_close / 100, 1.0)
+        smooth_close = SMOOTH_FACTOR + (3.0 * (1 - ratio_close))
+
+        # Distant target (150 px)
+        dist_far = 150
+        ratio_far = min(dist_far / 100, 1.0)
+        smooth_far = SMOOTH_FACTOR + (3.0 * (1 - ratio_far))
+
+        # Closer targets receive more damping (higher smooth value)
+        self.assertGreater(smooth_close, smooth_far)
+        self.assertAlmostEqual(smooth_close, 4.7, delta=0.5)
+        self.assertLessEqual(smooth_far, 2.0)
 
 
 class TestVisionSystemThreading(unittest.TestCase):
-    """Tests du système de threading asynchrone pour YOLO"""
-    
+    """Tests for the async queue infrastructure used by the capture/inference pipeline."""
+
     def test_double_queue_system(self):
-        """Simuler le système de double queue pour l'asynchrone"""
+        """Simulate the dual-queue producer/consumer pattern."""
         frame_queue = queue.Queue(maxsize=1)
         detection_queue = queue.Queue(maxsize=1)
-        
-        # Simuler la capture (Thread 1)
+
+        # Simulate the capture producer
         for i in range(5):
             if frame_queue.full():
                 frame_queue.get_nowait()
             frame_queue.put(f"frame_{i}")
-        
-        # Simuler la détection (Thread 2)
+
+        # Simulate the inference consumer
         for i in range(5):
             if not frame_queue.empty():
                 frame = frame_queue.get()
                 detections = [{'id': i, 'x': 100+i*10, 'y': 100}]
-                
+
                 if detection_queue.full():
                     detection_queue.get_nowait()
                 detection_queue.put((detections, frame))
-        
-        # Vérifier qu'on a bien des détections
+
         self.assertFalse(detection_queue.empty())
         detections, frame = detection_queue.get()
         self.assertIsInstance(detections, list)
         self.assertGreater(len(detections), 0)
-    
+
     def test_non_blocking_detection_retrieval(self):
-        """Vérifier que la récupération de détection est non-bloquante"""
+        """Verify that an empty queue is polled without blocking."""
         detection_queue = queue.Queue(maxsize=1)
-        
-        # Queue vide : doit retourner immédiatement
+
         start = time.perf_counter()
         if detection_queue.empty():
             result = ([], None)
         else:
             result = detection_queue.get()
         elapsed = time.perf_counter() - start
-        
-        # Doit être quasi-instantané (< 1ms)
+
+        # Must return in under 1 ms
         self.assertLess(elapsed, 0.001)
         self.assertEqual(result, ([], None))
-    
+
     def test_queue_overflow_handling(self):
-        """Vérifier le comportement avec overflow de queue"""
+        """Verify that overflow evicts the oldest item and retains the newest."""
         detection_queue = queue.Queue(maxsize=1)
-        
-        # Remplir la queue
+
         detection_queue.put(([{'id': 0}], "frame_0"))
-        
-        # Essayer d'ajouter une nouvelle détection (doit drop l'ancienne)
+
         if detection_queue.full():
             old = detection_queue.get_nowait()
             self.assertEqual(old[0][0]['id'], 0)
-        
+
         detection_queue.put(([{'id': 1}], "frame_1"))
-        
-        # Vérifier qu'on a bien la plus récente
+
         detections, _ = detection_queue.get()
         self.assertEqual(detections[0]['id'], 1)
 
 
 def run_performance_test():
-    """Test de performance (hors unittest)"""
+    """Standalone throughput benchmarks (not part of the unittest suite)."""
     print("\n" + "="*60)
-    print("🚀 TESTS DE PERFORMANCE")
+    print("🚀 PERFORMANCE BENCHMARKS")
     print("="*60)
-    
-    # Test 1: Vitesse du Kalman
+
+    # Benchmark 1: Kalman filter throughput
     kalman = KalmanFilterMouse()
     start = time.perf_counter()
     for _ in range(1000):
         kalman.update(np.array([100.0, 100.0]))
         kalman.predict()
     elapsed = time.perf_counter() - start
-    print(f"✓ Kalman (1000 itérations): {elapsed*1000:.2f}ms ({1000/elapsed:.0f} ops/sec)")
-    
-    # Test 2: Vitesse du Bézier
+    print(f"✓ Kalman filter (1000 iterations): {elapsed*1000:.2f} ms ({1000/elapsed:.0f} ops/s)")
+
+    # Benchmark 2: Bézier generator throughput
     bezier = BezierGenerator()
     start = time.perf_counter()
     for _ in range(1000):
         bezier.generate_curve(50, 30, steps=8)
     elapsed = time.perf_counter() - start
-    print(f"✓ Bézier (1000 courbes): {elapsed*1000:.2f}ms ({1000/elapsed:.0f} ops/sec)")
-    
-    # Test 3: Vitesse du DecisionEngine
+    print(f"✓ Bézier generator (1000 curves): {elapsed*1000:.2f} ms ({1000/elapsed:.0f} ops/s)")
+
+    # Benchmark 3: DecisionEngine throughput
     engine = DecisionEngine()
     detections = [
         {'id': i, 'x': 100+i*10, 'y': 100+i*5, 'w': 50, 'h': 80, 'conf': 0.9}
@@ -329,77 +313,70 @@ def run_performance_test():
     for _ in range(10000):
         engine.choose_target(detections, (208, 208))
     elapsed = time.perf_counter() - start
-    print(f"✓ DecisionEngine (10000 sélections): {elapsed*1000:.2f}ms ({10000/elapsed:.0f} ops/sec)")
-    
-    # Test 4: Latence du système de Queue Asynchrone
+    print(f"✓ DecisionEngine (10000 selections): {elapsed*1000:.2f} ms ({10000/elapsed:.0f} ops/s)")
+
+    # Benchmark 4: Async queue simulation
     print("\n" + "-"*60)
-    print("📊 SIMULATION SYSTÈME ASYNCHRONE (Queue Threading)")
+    print("📊 ASYNC QUEUE SIMULATION (capture → inference threading)")
     print("-"*60)
-    
+
     frame_queue = queue.Queue(maxsize=1)
     detection_queue = queue.Queue(maxsize=1)
-    
-    # Simuler Thread 1: Capture rapide
+
     def capture_simulator():
         for i in range(100):
             if frame_queue.full():
                 frame_queue.get_nowait()
             frame_queue.put(f"frame_{i}")
-            time.sleep(0.001)  # 1000 FPS théorique
-    
-    # Simuler Thread 2: Détection YOLO (plus lent)
+            time.sleep(0.001)  # 1000 FPS theoretical
+
     detection_times = []
+
     def detection_simulator():
         while True:
             if not frame_queue.empty():
                 frame = frame_queue.get()
-                
+
                 start = time.perf_counter()
-                # Simuler l'inférence YOLO (30-50ms)
-                time.sleep(0.035)
+                time.sleep(0.035)  # Simulate ~35 ms YOLOv10 inference
                 detections = [{'id': 0, 'x': 200, 'y': 200}]
                 elapsed = time.perf_counter() - start
                 detection_times.append(elapsed)
-                
+
                 if detection_queue.full():
                     detection_queue.get_nowait()
                 detection_queue.put((detections, frame))
-                
+
                 if len(detection_times) >= 10:
                     break
             else:
                 time.sleep(0.001)
-    
-    # Lancer les threads
+
     t1 = threading.Thread(target=capture_simulator, daemon=True)
     t2 = threading.Thread(target=detection_simulator, daemon=True)
-    
+
     start_global = time.perf_counter()
     t1.start()
     t2.start()
-    
     t1.join()
     t2.join(timeout=2)
     total_time = time.perf_counter() - start_global
-    
-    # Calculer les stats
-    avg_detection_time = np.mean(detection_times) * 1000
-    max_detection_time = np.max(detection_times) * 1000
+
+    avg_inference = np.mean(detection_times) * 1000
+    max_inference = np.max(detection_times) * 1000
     throughput = len(detection_times) / total_time
-    
-    print(f"✓ Temps moyen inférence YOLO: {avg_detection_time:.2f}ms")
-    print(f"✓ Temps max inférence YOLO: {max_detection_time:.2f}ms")
-    print(f"✓ Débit détections: {throughput:.1f} détections/sec")
-    print(f"✓ Latence récupération: < 0.1ms (non-bloquant)")
-    
-    # Test 5: Overhead du système de queue
+
+    print(f"✓ Average YOLOv10 inference latency: {avg_inference:.2f} ms")
+    print(f"✓ Peak YOLOv10 inference latency:    {max_inference:.2f} ms")
+    print(f"✓ Detection throughput:               {throughput:.1f} detections/s")
+    print(f"✓ Queue retrieval latency:            < 0.1 ms (non-blocking)")
+
+    # Benchmark 5: Queue overhead
     print("\n" + "-"*60)
-    print("⚡ OVERHEAD SYSTÈME DE QUEUE")
+    print("⚡ QUEUE OVERHEAD")
     print("-"*60)
-    
+
     test_queue = queue.Queue(maxsize=1)
-    
-    # Test put/get
     start = time.perf_counter()
     for i in range(10000):
         if test_queue.full():
@@ -407,32 +384,29 @@ def run_performance_test():
         test_queue.put(i)
         test_queue.get()
     elapsed = time.perf_counter() - start
-    print(f"✓ Queue put+get (10000x): {elapsed*1000:.2f}ms ({10000/elapsed:.0f} ops/sec)")
-    print(f"✓ Overhead par opération: {elapsed/10000*1000000:.2f}us")
-    
-    print("\n✅ Tous les tests de performance OK\n")
+    print(f"✓ Queue put+get (10000×): {elapsed*1000:.2f} ms ({10000/elapsed:.0f} ops/s)")
+    print(f"✓ Overhead per operation: {elapsed/10000*1000000:.2f} µs")
+
+    print("\n✅ All performance benchmarks passed\n")
 
 
 if __name__ == '__main__':
     print("="*60)
-    print("🧪 TESTS UNITAIRES - AIMBOT YOLO")
+    print("🧪 UNIT TESTS — AUTONOMOUS SIGHTING SYSTEM (YOLOv10 Pipeline)")
     print("="*60 + "\n")
-    
-    # Lancer les tests unitaires
+
     suite = unittest.TestLoader().loadTestsFromModule(sys.modules[__name__])
     runner = unittest.TextTestRunner(verbosity=2)
     result = runner.run(suite)
-    
-    # Tests de performance
+
     if result.wasSuccessful():
         run_performance_test()
-    
-    # Résumé
+
     print("="*60)
     if result.wasSuccessful():
-        print("✅ TOUS LES TESTS RÉUSSIS")
+        print("✅ ALL TESTS PASSED")
     else:
-        print("❌ CERTAINS TESTS ONT ÉCHOUÉ")
+        print("❌ SOME TESTS FAILED")
     print("="*60)
-    
+
     sys.exit(0 if result.wasSuccessful() else 1)
