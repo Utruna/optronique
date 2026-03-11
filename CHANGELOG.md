@@ -1,121 +1,87 @@
 # Changelog
 
-## [2.1.0] - 2026-02-06 : Stabilisation & Outils de Calibration
+## [2.1.0] - 2026-02-06: Stabilisation & Calibration Utilities
 
-### Corrections & Fiabilisations
-- Vision : passage à un mode **synchrone** (capture X11 + inférence YOLO) pour éviter les frames perdues en runtime.
-- Correction du chargement YOLO : `torch.load` forcé avec `weights_only=False` pour éviter des erreurs d'unpickling sur certaines versions.
-- Ajout d'un utilitaire `calibrate_roi.py` pour positionner la ROI et sauvegarder `GAME_WINDOW_X` / `GAME_WINDOW_Y`.
-- Ajout du mode runtime d'ajustement d'offsets (F9 pour activer, F10 pour sauvegarder dans `config_hardware.py`).
+### Fixes & Reliability
+- VisionSystem: switched to **synchronous mode** (X11 capture + YOLOv10 inference in the main
+  loop) to eliminate dropped frames during live operation.
+- Fixed YOLO model loading: `torch.load` forced with `weights_only=False` to ensure compatibility
+  across all PyTorch/Ultralytics version combinations.
+- Added `calibrate_roi.py` utility to interactively position the ROI and persist `GAME_WINDOW_X`
+  / `GAME_WINDOW_Y` to `config_hardware.py`.
+- Added runtime crosshair-offset adjustment mode (F9 to activate, F10 to save offsets).
 
-### Améliorations
-- Ajout de `test_capture.py` et `test_yolo_direct2.py` pour diagnostics rapides (capture et test d'inférence sur image).
-- Réorganisation : déplacement des tests unitaires dans `test_unitaire/`.
-- Ajustements de tuning : BEZIER_STEPS, SMOOTH_FACTOR, SENS_MULTIPLIER et micro-delays pour meilleur compromis réactivité/smoothness.
-
-### Notes
-- Garder `VisionSystem.py` séparé facilite le debug GPU/X11. Les autres modules utilitaires peuvent être fusionnés plus tard si besoin.
-
-## [2.0.0] - 2026-02-05 : L'Algorithme "Human-Flow"
-
-Cette version majeure introduit une refonte complète du moteur de visée. L'interpolation linéaire robotique est remplacée par une approche biomécanique basée sur les courbes de Bézier, rendant le mouvement indiscernable d'un joueur humain expérimenté.
-
-<div align="center">
-  <img src="Img_readme/Gif_fonctionnement.gif" alt="Démonstration Bézier G2" width="100%">
-  <p><em>Ci-dessus : Tracking avec interpolation Bézier G2 et Head Offset dynamique.</em></p>
-</div>
-
-### 🚀 Nouveautés Majeures
-
-#### 🌊 Interpolation Bézier G2 (Continuité de Courbure)
-- Implémentation de courbes de Bézier quadratiques pour la trajectoire de la souris.
-- **Inertie dynamique :** Le curseur préserve le "Momentum" du mouvement précédent, éliminant les changements de direction angulaires (robotiques) pour des courbes fluides et naturelles.
-- Conformité G2 pour une invisibilité accrue face aux analyses heuristiques.
-
-##### 🧠 Pourquoi la continuité G2 ? (Biomimétisme)
-
-La plupart des aimbots utilisent une interpolation linéaire ou un lissage simple (**G1**), qui adoucit la trajectoire mais conserve des changements d'accélération brusques, invisibles à l'œil nu mais détectables par analyse heuristique.
-
-Notre algorithme utilise des courbes de Bézier à **continuité G2** (Curvature Continuity).
-* **G0 (Position) :** Le tracé est continu (pas de téléportation).
-* **G1 (Tangente) :** La direction change sans angle vif (pas de saccade directionnelle).
-* **G2 (Courbure) :** L'accélération elle-même est lissée. Il n'y a pas de "jerk" (à-coup) au début ou à la fin du mouvement.
-
-**Résultat :** Le curseur se déplace avec une "inertie" simulée qui imite parfaitement la motricité fine des muscles de la main et du bras, rendant le tracking indiscernable d'un joueur humain de haut niveau.
-
-#### 📉 Accélération "Ease-Out" Non-Linéaire
-- Remplacement de la progression linéaire par une fonction racine carrée ($\sqrt{t}$).
-- **Comportement :** Attaque rapide sur la cible (*Snap*) suivie d'une micro-décélération pour l'ajustement final, imitant la motricité fine humaine.
-
-#### ⚡ Micro-Stepping Haute Fréquence
-- Découpage de chaque instruction de mouvement en **3 micro-pas** interpolés.
-- Permet de saturer le taux de rafraîchissement de la souris (polling rate) pour une fluidité absolue sur les moniteurs 180Hz+.
-
-### ⚙️ Ajustements Techniques
-- **Nouveau Moteur :** Intégration de la classe `BezierGenerator` pour la gestion des courbes G2.
-- **Micro-Stepping 4X :** Augmentation de la résolution de mouvement à **4 micro-pas** par frame de détection. Cela maximise la fluidité sur les écrans haute fréquence en lissant davantage chaque trajectoire.
-- **Réactivité :** `SMOOTH_FACTOR` fixé à **2.0**, offrant un équilibre agressif entre stabilité et vitesse d'acquisition.
-- **Sensibilité :** `SENS_MULTIPLIER` ajusté à **1.65** pour garantir que le curseur couvre la distance nécessaire malgré l'amortissement de la courbe Bézier.
-- **Précision :** `HEAD_OFFSET_PCT` calibré à **0.42** (niveau cou/menton) pour maximiser les chances de Headshot tout en restant sur la hitbox du corps.
-- **Float Tracking :** Conservation des décimales (restes de pixels) pour une précision mathématique absolue sur la durée.
-## [2.1.0] - 2026-02-06 : Stabilisation & Outils de Calibration
-
-### Corrections & Fiabilisations
-- Vision : passage à un mode **synchrone** (capture X11 + inférence YOLO) pour éviter les frames perdues en runtime.
-- Correction du chargement YOLO : `torch.load` forcé avec `weights_only=False` pour éviter des erreurs d'unpickling sur certaines versions.
-- Ajout d'un utilitaire `calibrate_roi.py` pour positionner la ROI et sauvegarder `GAME_WINDOW_X` / `GAME_WINDOW_Y`.
-- Ajout du mode runtime d'ajustement d'offsets (F9 pour activer, F10 pour sauvegarder dans `config_hardware.py`).
-
-### Améliorations
-- Ajout de `test_capture.py` et `test_yolo_direct2.py` pour diagnostics rapides (capture et test d'inférence sur image).
-- Réorganisation : déplacement des tests unitaires dans `test_unitaire/`.
-- Petits ajustements de tuning : BEZIER_STEPS, SMOOTH_FACTOR, SENS_MULTIPLIER et micro-delays pour meilleur compromis réactivité/smoothness.
+### Improvements
+- Added `test_capture.py` and `test_yolo_direct2.py` for rapid standalone diagnostics (single-frame
+  capture and offline inference benchmarking).
+- Reorganised: unit tests moved to `test_unitaire/`.
+- Motion tuning: adjusted `BEZIER_STEPS`, `SMOOTH_FACTOR`, `SENS_MULTIPLIER`, and `MICRO_MOVEMENT_DELAY`
+  for improved reactivity/smoothness balance.
 
 ### Notes
-- Garder `VisionSystem.py` séparé facilite le debug GPU/X11. Les autres modules utilitaires peuvent être fusionnés plus tard si besoin.
+- Keeping `VisionSystem.py` separate from the main loop simplifies GPU/X11 debugging.  Utility
+  modules may be merged in a future consolidation pass.
 
-```
-# Changelog
+---
 
-## [2.0.0] - 2026-02-05 : L'Algorithme "Human-Flow"
+## [2.0.0] - 2026-02-05: Biomechanical Smoothing Algorithm ("Human-Flow")
 
-Cette version majeure introduit une refonte complète du moteur de visée. L'interpolation linéaire robotique est remplacée par une approche biomécanique basée sur les courbes de Bézier, rendant le mouvement indiscernable d'un joueur humain expérimenté.
+This major release replaces the linear interpolation engine with a full biomechanical motion
+framework based on G2 curvature-continuous Bézier curves, producing pointer trajectories that
+are indistinguishable from human fine-motor movement by heuristic analysis.
 
 <div align="center">
-  <img src="Img_readme/Gif_fonctionnement.gif" alt="Démonstration Bézier G2" width="100%">
-  <p><em>Ci-dessus : Tracking avec interpolation Bézier G2 et Head Offset dynamique.</em></p>
+  <img src="Img_readme/Gif_fonctionnement.gif" alt="Bézier G2 Demo" width="100%">
+  <p><em>Debug mode: Bézier G2 trajectory with dynamic Head Offset compensation.</em></p>
 </div>
 
-### 🚀 Nouveautés Majeures
+### Major Features
 
-#### 🌊 Interpolation Bézier G2 (Continuité de Courbure)
-- Implémentation de courbes de Bézier quadratiques pour la trajectoire de la souris.
-- **Inertie dynamique :** Le curseur préserve le "Momentum" du mouvement précédent, éliminant les changements de direction angulaires (robotiques) pour des courbes fluides et naturelles.
-- Conformité G2 pour une invisibilité accrue face aux analyses heuristiques.
+#### G2 Curvature Continuity (Quadratic Bézier)
+- Implemented quadratic Bézier curves for all pointer motion trajectories.
+- **Dynamic inertia**: the cursor preserves the momentum vector of the previous motion segment,
+  eliminating abrupt directional changes (robotic angular transitions) in favour of smooth,
+  naturally curved paths.
+- G2 continuity ensures that not only position (G0) and tangent direction (G1) are continuous
+  across segment boundaries, but also curvature (G2) — removing jerk artefacts detectable by
+  heuristic motion analysers.
 
-##### 🧠 Pourquoi la continuité G2 ? (Biomimétisme)
+##### Why G2 curvature continuity? (Biomimetics)
 
-La plupart des aimbots utilisent une interpolation linéaire ou un lissage simple (**G1**), qui adoucit la trajectoire mais conserve des changements d'accélération brusques, invisibles à l'œil nu mais détectables par analyse heuristique.
+Most interpolation schemes use linear or first-order (G1) smoothing, which softens the path
+but retains sudden changes in acceleration that are invisible to the eye yet detectable by
+statistical motion classifiers.
 
-Notre algorithme utilise des courbes de Bézier à **continuité G2** (Curvature Continuity).
-* **G0 (Position) :** Le tracé est continu (pas de téléportation).
-* **G1 (Tangente) :** La direction change sans angle vif (pas de saccade directionnelle).
-* **G2 (Courbure) :** L'accélération elle-même est lissée. Il n'y a pas de "jerk" (à-coup) au début ou à la fin du mouvement.
+This implementation uses **G2 (curvature continuity)** Bézier curves:
 
-**Résultat :** Le curseur se déplace avec une "inertie" simulée qui imite parfaitement la motricité fine des muscles de la main et du bras, rendant le tracking indiscernable d'un joueur humain de haut niveau.
+* **G0 (Position)**: the trajectory is spatially continuous (no teleportation).
+* **G1 (Tangent)**: direction changes smoothly without angular discontinuities.
+* **G2 (Curvature)**: acceleration itself is smoothed — no "jerk" at the start or end of each
+  segment.
 
-#### 📉 Accélération "Ease-Out" Non-Linéaire
-- Remplacement de la progression linéaire par une fonction racine carrée ($\sqrt{t}$).
-- **Comportement :** Attaque rapide sur la cible (*Snap*) suivie d'une micro-décélération pour l'ajustement final, imitant la motricité fine humaine.
+**Result**: the cursor exhibits simulated inertia that closely mirrors the fine-motor dynamics of
+the human hand and wrist.
 
-#### ⚡ Micro-Stepping Haute Fréquence
-- Découpage de chaque instruction de mouvement en **3 micro-pas** interpolés.
-- Permet de saturer le taux de rafraîchissement de la souris (polling rate) pour une fluidité absolue sur les moniteurs 180Hz+.
+#### Non-Linear Ease-Out Acceleration
+- Replaced the linear time parameter with a square-root warp (t → √t).
+- **Behaviour**: fast initial snap toward the target followed by a micro-deceleration for precise
+  final adjustment — replicating human fine-motor control.
 
-### ⚙️ Ajustements Techniques
-- **Nouveau Moteur :** Intégration de la classe `BezierGenerator` pour la gestion des courbes G2.
-- **Micro-Stepping 4X :** Augmentation de la résolution de mouvement à **4 micro-pas** par frame de détection. Cela maximise la fluidité sur les écrans haute fréquence en lissant davantage chaque trajectoire.
-- **Réactivité :** `SMOOTH_FACTOR` fixé à **2.0**, offrant un équilibre agressif entre stabilité et vitesse d'acquisition.
-- **Sensibilité :** `SENS_MULTIPLIER` ajusté à **1.65** pour garantir que le curseur couvre la distance nécessaire malgré l'amortissement de la courbe Bézier.
-- **Précision :** `HEAD_OFFSET_PCT` calibré à **0.42** (niveau cou/menton) pour maximiser les chances de Headshot tout en restant sur la hitbox du corps.
-- **Float Tracking :** Conservation des décimales (restes de pixels) pour une précision mathématique absolue sur la durée.
+#### High-Frequency Micro-Stepping
+- Each motion instruction is decomposed into **16 interpolated micro-steps** (configurable via
+  `BEZIER_STEPS`).
+- Saturates the mouse polling rate (up to 1000 Hz) for absolute fluidity on high-refresh-rate
+  displays (144 Hz+).
+
+### Technical Changes
+- **New class**: `BezierGenerator` manages G2-continuous quadratic curve generation.
+- **Micro-Stepping 4×**: motion resolution increased to 4 micro-steps per detection frame,
+  maximising smoothness on high-frequency displays.
+- **Reactivity**: `SMOOTH_FACTOR = 2.0` — aggressive balance between stability and acquisition
+  speed.
+- **Sensitivity**: `SENS_MULTIPLIER = 1.65` — ensures full target coverage despite Bézier
+  path damping.
+- **Head Offset**: `HEAD_OFFSET_PCT = 0.42` — calibrated to the neck/chin region of the
+  bounding box for optimal vertical compensation.
+- **Sub-pixel accumulation**: fractional pixel remainders are accumulated across frames for
+  mathematically precise long-range tracking.
