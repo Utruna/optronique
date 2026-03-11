@@ -3,4 +3,5 @@
 /__pycache__
 /path
 /resultat_test.jpg
-/test_v10
+/test_v10.pytest_cache/
+test_unitaire/__pycache__/
